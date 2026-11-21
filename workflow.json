@@ -1,0 +1,745 @@
+{
+  "name": "Telegram Task Manager + Google Sheets (FA) - Public Template",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        2656,
+        2272
+      ],
+      "id": "23950ca2-82d6-4c03-839b-159f8a7bf0fd",
+      "name": "Telegram Trigger",
+      "webhookId": "68bc219b-3e63-47af-af42-6a42736f6ca4",
+      "notes": "Select your Telegram credential (BotFather token). Requires a public HTTPS webhook URL."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Telegram Task Manager — command parser (no external AI/API dependency).\n// Optional security: put your Telegram numeric user ID between the quotes.\n// Keep empty ('') to allow any Telegram user to message this bot privately.\nconst ALLOWED_TELEGRAM_USER_ID = '';\nconst message = $input.first().json.message || {};\nconst chat_id = String(message.chat?.id ?? '');\nconst user_id = String(message.from?.id ?? '');\nconst normalizeDigits = (s) => String(s).replace(/[۰-۹]/g, x => String(x.charCodeAt(0)-1776)).replace(/[٠-٩]/g, x => String(x.charCodeAt(0)-1632));\nconst raw = String(message.text ?? '').trim();\nconst text = normalizeDigits(raw).replace(/ي/g,'ی').replace(/ك/g,'ک');\nconst help = '🤖 راهنمای مدیریت کارها:\\n\\n➕ افزودن: /add تمرین پایتون\\n➕ با تاریخ: /add تمرین پایتون | 2026-12-01 | 10:30\\n➕ فارسی: فردا تمرین پایتون ساعت ۱۰ صبح\\n📋 کارهای باز: /list\\n📅 کارهای امروز: /today\\n✅ اتمام کار: /done TASK_ID\\n❓ راهنما: /help\\n\\nتاریخ عددی میلادی (YYYY-MM-DD) است. زمان بر اساس ایران نمایش داده می‌شود.';\nfunction iranISODate(offsetDays=0) {\n  const parts = new Intl.DateTimeFormat('en-US',{timeZone:'Asia/Tehran',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());\n  const grab = k => Number(parts.find(p=>p.type===k)?.value ?? 0);\n  const d = new Date(Date.UTC(grab('year'),grab('month')-1,grab('day')+offsetDays));\n  return d.toISOString().slice(0,10);\n}\nfunction validISODate(s) {\n  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return false;\n  const d = new Date(s+'T00:00:00Z');\n  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0,10)===s;\n}\nfunction clock(h,m,period='') {\n  h=Number(h);m=Number(m || 0);\n  if (m>59 || h<0 || h>23) return '';\n  if (period) {\n    if (h<1 || h>12) return '';\n    if (period==='صبح' && h===12) h=0;\n    if (period==='ظهر' || period==='عصر' || period==='شب') {\n      if (period==='شب' && h===12) h=0;\n      else if (h<12) h+=12;\n    }\n  }\n  return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');\n}\nconst basic = {chat_id,user_id,today_ymd:iranISODate(),source_text:raw};\nconst reply = (s) => [{json:{...basic,route:'reply',reply_text:s}}];\nif (!chat_id || !user_id) return [];\nif (message.chat?.type !== 'private') return reply('🔒 این ربات فقط در گفت‌وگوی خصوصی کار می‌کند.');\nif (ALLOWED_TELEGRAM_USER_ID && user_id !== ALLOWED_TELEGRAM_USER_ID) return reply('⛔ این ربات خصوصی است.');\nif (!text || /^\\/(start|help)(?:@\\w+)?\\s*$/i.test(text)) return reply(help);\nif (/^\\/(list|tasks|today)(?:@\\w+)?\\s*$/i.test(text)) return [{json:{...basic,route:'list',only_today:/^\\/today/i.test(text)}}];\nif (/^\\/done(?:@\\w+)?(?:\\s+|$)/i.test(text)) {\n  const task_id = text.replace(/^\\/done(?:@\\w+)?/i,'').trim().toUpperCase();\n  if (!/^T[A-Z0-9]{8,24}$/.test(task_id)) return reply('⚠️ شناسه کار معتبر نیست. نمونه:\\n/done TXXXXXXXXXXXX\\n\\nبرای دیدن شناسه‌ها /list را بفرست.');\n  return [{json:{...basic,route:'done',task_id}}];\n}\nif (/^\\//.test(text) && !/^\\/add(?:@\\w+)?(?:\\s+|$)/i.test(text)) return reply(help);\nlet body = text.replace(/^\\/add(?:@\\w+)?\\s*/i,'').trim();\nif (!body) return reply('⚠️ عنوان کار را وارد کن.\\n\\n'+help);\nlet task=body, due_date='', due_time='';\nif (body.includes('|')) {\n  const fields=body.split('|').map(s=>s.trim());\n  if (fields.length>3) return reply('⚠️ فرمت درست:\\n/add عنوان کار | YYYY-MM-DD | HH:MM');\n  task=fields[0] || '';\n  if (fields[1]) {\n    due_date = fields[1]==='امروز'?iranISODate():fields[1]==='فردا'?iranISODate(1):fields[1];\n    if (!validISODate(due_date)) return reply('⚠️ تاریخ باید میلادی و به شکل YYYY-MM-DD باشد.');\n  }\n  if (fields[2]) {\n    const m=fields[2].match(/^(\\d{1,2}):(\\d{2})$/);\n    if (!m || !(due_time=clock(m[1],m[2]))) return reply('⚠️ زمان باید به شکل 09:30 یا 18:00 باشد.');\n  }\n} else {\n  const rel=task.match(/(?:^|\\s)(امروز|فردا)(?=\\s|$)/);\n  if (rel) {\n    due_date=iranISODate(rel[1]==='فردا'?1:0);\n    task=task.replace(rel[0],' ').trim();\n  }\n  const iso=task.match(/(?:^|\\s)(\\d{4}-\\d{2}-\\d{2})(?=\\s|$)/);\n  if (iso) {\n    if (!validISODate(iso[1])) return reply('⚠️ تاریخ نامعتبر است؛ از YYYY-MM-DD میلادی استفاده کن.');\n    due_date=iso[1];task=task.replace(iso[0],' ').trim();\n  }\n  const tm=task.match(/\\s*ساعت\\s*(\\d{1,2})(?::(\\d{1,2}))?\\s*(صبح|ظهر|عصر|شب)?/);\n  if (tm) {\n    due_time=clock(tm[1],tm[2],tm[3]||'');\n    if (!due_time) return reply('⚠️ ساعت نامعتبر است. نمونه: ساعت ۱۰ صبح یا ساعت 18:30');\n    task=task.replace(tm[0],' ').trim();\n  }\n}\ntask=task.replace(/\\s+/g,' ').trim();\nif (!task || task.length>200) return reply('⚠️ عنوان کار باید بین ۱ تا ۲۰۰ کاراکتر باشد.');\nconst task_id='T'+Date.now().toString(36).toUpperCase()+Math.random().toString(36).slice(2,6).toUpperCase();\nreturn [{json:{...basic,route:'add',Task_ID:task_id,Chat_ID:chat_id,Task:task,Due_Date:due_date,Due_Time:due_time,Status:'Open',Created_At:new Date().toISOString(),Completed_At:'',Source:'Telegram'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        2272
+      ],
+      "id": "dfb43254-72c0-4a41-a0cb-4e23612d9927",
+      "name": "Parse Telegram Message"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3748d2dd-17a8-4a81-b2bd-2ff2468c0e0d",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "add",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3152,
+        2272
+      ],
+      "id": "ee968fc8-66a1-43d0-bbe1-7c7558739c4c",
+      "name": "Is Add Command?"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tasks",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Task_ID": "={{ $json.Task_ID }}",
+            "Chat_ID": "={{ $json.chat_id }}",
+            "Task": "={{ $json.Task }}",
+            "Source": "={{ $json.Source }}",
+            "Completed_At": "={{ $json.Completed_At }}",
+            "Created_At": "={{ $json.Created_At }}",
+            "Status": "={{ $json.Status }}",
+            "Due_Time": "={{ $json.Due_Time }}",
+            "Due_Date": "={{ $json.Due_Date }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Task_ID",
+              "displayName": "Task_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Chat_ID",
+              "displayName": "Chat_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Task",
+              "displayName": "Task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Due_Date",
+              "displayName": "Due_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Due_Time",
+              "displayName": "Due_Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Created_At",
+              "displayName": "Created_At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Completed_At",
+              "displayName": "Completed_At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3440,
+        2048
+      ],
+      "id": "f6ac703f-22f1-4b5f-9c75-9985bd43d533",
+      "name": "Google Sheets - Append Task"
+    },
+    {
+      "parameters": {
+        "jsCode": "const t=$('Parse Telegram Message').first().json;\nconst when=[t.Due_Date,t.Due_Time].filter(Boolean).join(' ');\nreturn [{json:{chat_id:t.chat_id,reply_text:'✅ کار ثبت شد!\\n\\n📝 '+t.Task+(when?'\\n🕒 '+when:'')+'\\n🆔 '+t.Task_ID+'\\n\\nبرای فهرست: /list'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        2048
+      ],
+      "id": "fe1aec58-2cec-43d4-a734-f190783844e3",
+      "name": "Build Add Confirmation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f351ffb4-59e3-47b2-9762-583008d7c2f8",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "list",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3440,
+        2368
+      ],
+      "id": "d41ac112-5f5f-4bc2-8183-25dca55dfbb3",
+      "name": "Is List Command?"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tasks",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3728,
+        2336
+      ],
+      "id": "5dfd1791-d756-4b08-a126-356e71fc25fd",
+      "name": "Google Sheets - Read For List",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Parse Telegram Message').first().json;\nconst data=$input.all().map(x=>x.json||{});\nlet tasks=data.filter(r=>String(r.Chat_ID??'').trim()===context.chat_id && String(r.Status??'Open').trim().toLowerCase()!=='done');\nif (context.only_today) tasks=tasks.filter(r=>String(r.Due_Date??'').trim()===context.today_ymd);\ntasks.sort((a,b)=>String(a.Due_Date||'9999').localeCompare(String(b.Due_Date||'9999')) || String(a.Due_Time||'99').localeCompare(String(b.Due_Time||'99')) || String(a.Created_At||'').localeCompare(String(b.Created_At||'')));\nconst limit=10;\nconst text=tasks.length===0 ? (context.only_today?'📅 برای امروز کار بازی ثبت نشده است.':'📭 هنوز کار بازی ثبت نشده است.\\n\\nبرای افزودن: /add تمرین پایتون') :\n  (context.only_today?'📅 کارهای باز امروز':'📋 کارهای باز')+' ('+tasks.length+'):\\n\\n'+tasks.slice(0,limit).map((r,i)=>{\n    const title=String(r.Task||'بدون عنوان').slice(0,130);\n    const when=[String(r.Due_Date||'').trim(),String(r.Due_Time||'').trim()].filter(Boolean).join(' ');\n    return (i+1)+'. '+title+(when?'\\n🕒 '+when:'')+'\\n🆔 '+String(r.Task_ID||'');\n  }).join('\\n\\n')+(tasks.length>limit?'\\n\\n... و '+(tasks.length-limit)+' مورد دیگر':'')+'\\n\\nبرای انجام‌شده کردن: /done TASK_ID';\nreturn [{json:{chat_id:context.chat_id,reply_text:text}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3984,
+        2336
+      ],
+      "id": "033b91fa-4051-40c1-9df6-94230c5cbd7a",
+      "name": "Build Task List"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "acb2fcc0-a1da-4396-b781-591e9ac3922f",
+              "leftValue": "={{ $json.route }}",
+              "rightValue": "done",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3712,
+        2544
+      ],
+      "id": "06589af1-005a-46d2-a6a8-64a91c2b20a8",
+      "name": "Is Done Command?"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tasks",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4000,
+        2656
+      ],
+      "id": "05f663eb-17e7-421a-8187-2e1827fccfbd",
+      "name": "Google Sheets - Read For Done",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const context=$('Parse Telegram Message').first().json;\nconst rows=$input.all().map(i=>i.json||{});\nconst found=rows.find(r=>String(r.Task_ID??'').trim().toUpperCase()===context.task_id && String(r.Chat_ID??'').trim()===context.chat_id);\nif (!found) return [{json:{found_flag:'no',chat_id:context.chat_id,reply_text:'🔎 کاری با این شناسه در فهرست تو پیدا نشد.\\nبرای دیدن کارهای باز /list را بفرست.'}}];\nif (String(found.Status??'').trim().toLowerCase()==='done') return [{json:{found_flag:'no',chat_id:context.chat_id,reply_text:'✅ این کار قبلاً انجام‌شده ثبت شده است.'}}];\nreturn [{json:{found_flag:'yes',Task_ID:context.task_id,Status:'Done',Completed_At:new Date().toISOString(),Task:String(found.Task??''),chat_id:context.chat_id}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4256,
+        2656
+      ],
+      "id": "b502124c-c077-4ccf-9175-c2adfb38794e",
+      "name": "Find Task To Complete"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "85c93736-a822-4ea8-be3a-ffc533b0bfd4",
+              "leftValue": "={{ $json.found_flag }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4512,
+        2656
+      ],
+      "id": "fc9e526b-4100-4d15-bb6d-5487e899db46",
+      "name": "Task Found?"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Tasks",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Task_ID": "={{ $json.Task_ID }}",
+            "Status": "={{ $json.Status }}",
+            "Completed_At": "={{ $json.Completed_At }}"
+          },
+          "matchingColumns": [
+            "Task_ID"
+          ],
+          "schema": [
+            {
+              "id": "Task_ID",
+              "displayName": "Task_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Chat_ID",
+              "displayName": "Chat_ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Task",
+              "displayName": "Task",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Due_Date",
+              "displayName": "Due_Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Due_Time",
+              "displayName": "Due_Time",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Created_At",
+              "displayName": "Created_At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Completed_At",
+              "displayName": "Completed_At",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "displayName": "Source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        4784,
+        2720
+      ],
+      "id": "586b099c-16df-4fb2-a82d-545d3cb8b830",
+      "name": "Google Sheets - Mark Done"
+    },
+    {
+      "parameters": {
+        "jsCode": "const r=$('Find Task To Complete').first().json;\nreturn [{json:{chat_id:r.chat_id,reply_text:'✅ کار انجام‌شده ثبت شد!\\n\\n📝 '+r.Task+'\\n🆔 '+r.Task_ID+'\\n\\nبرای فهرست: /list'}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5040,
+        2576
+      ],
+      "id": "c00bad7e-d4fd-4305-87e5-82fbc4dc7ef1",
+      "name": "Build Done Confirmation"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ String($json.reply_text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        5312,
+        2336
+      ],
+      "id": "59b4267d-983e-4e5f-8319-811363e9c84c",
+      "name": "Send Telegram Reply",
+      "webhookId": "7fcd2cc6-325c-4004-af62-b7e44d728be1",
+      "notes": "Select the SAME Telegram credential as Telegram Trigger."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Is Add Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Add Command?": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Append Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is List Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Append Task": {
+      "main": [
+        [
+          {
+            "node": "Build Add Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Add Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is List Command?": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Read For List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Done Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Read For List": {
+      "main": [
+        [
+          {
+            "node": "Build Task List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Task List": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Done Command?": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Read For Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Read For Done": {
+      "main": [
+        [
+          {
+            "node": "Find Task To Complete",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Task To Complete": {
+      "main": [
+        [
+          {
+            "node": "Task Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Task Found?": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets - Mark Done",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Sheets - Mark Done": {
+      "main": [
+        [
+          {
+            "node": "Build Done Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Done Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
