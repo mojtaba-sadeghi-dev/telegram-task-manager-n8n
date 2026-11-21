@@ -163,3 +163,17 @@ Interested in AI Automation, n8n, Python, REST API Integration, and Applied AI E
 ---
 
 *Built as a practical workflow automation project and a step toward developing more advanced AI-powered applications.*
+
+
+## 🖼️ Workflow Preview
+
+![Telegram Task Manager Architecture](./workflow-preview.png)
+
+This simplified diagram illustrates the main workflow paths.
+
+## 📊 Google Sheets Template
+
+Download the [Google Sheets CSV Template](./tasks-template.csv).
+
+Import the CSV into Google Sheets and name the worksheet `Tasks`. The template contains column headers only.
+
